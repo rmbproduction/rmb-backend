@@ -1,0 +1,33 @@
+# Environment Variables
+.env
+
+# Certificates
+cert.crt
+cert.key
+
+# Database
+*.sqlite3
+
+# Python
+*.pyc
+*.pyo
+__pycache__/
+
+# Virtual Environment
+v-env/
+
+# Logs
+*.log
+
+# Frontend
+node_modules/
+dist/
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+
+# System Files
+.DS_Store
+Thumbs.db
