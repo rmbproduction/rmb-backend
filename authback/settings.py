@@ -29,7 +29,7 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-4ga9@g3zft*$zk1rwdu_a
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
 
-ALLOWED_HOSTS = ['.railway.app', 'localhost']
+ALLOWED_HOSTS = ['*.railway.app', 'localhost','repairmybike.up.railway.app']
 
 
 # Application definition
@@ -111,10 +111,36 @@ WSGI_APPLICATION = 'authback.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    'default': dj_database_url.config(default=config('DATABASE_URL'))
-}
 
+
+# POSTGRES_LOCALLY = config("POSTGRES_LOCALLY", default=False, cast=bool)
+# ENVIRONMENT = config("ENVIRONMENT", default="local")
+
+# if ENVIRONMENT == 'production' or POSTGRES_LOCALLY:
+#     DATABASES = {
+#         'default': dj_database_url.parse(config('DATABASE_URL'))
+#     }
+# else:
+DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql_psycopg2",
+            "NAME": config('DATABASE_NAME', default='mydatabase'),
+            "USER": config('DATABASE_USER', default='myuser'),
+            "PASSWORD": config('DATABASE_PASSWORD', default='mypassword'),
+            "HOST": config('DATABASE_HOST', default='localhost'),
+            "PORT": config('DATABASE_PORT', default='5432'),
+        }
+    }
+
+DATABASES_URL = config('DATABASE_URL', default='',cast=str)
+if DATABASES_URL:
+    import dj_database_url
+    if DATABASES_URL.startswith('postgres://')or DATABASES_URL.startswith('postgresql://'):
+        DATABASES = {
+            'default': dj_database_url.config(
+                default=DATABASES_URL,
+            )
+        }
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -150,7 +176,18 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_ROOT = 'staticfiles'
+STATIC_URL = '/static/'
+
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR,'staticfiles')
+
+STATICFILES_DIR = {
+    os.path.join(BASE_DIR , "rmbstatic/static")
+}
+
+MEDIA_ROOT =  os.path.join(BASE_DIR, 'public/static') 
+MEDIA_URL = '/media/'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -172,7 +209,10 @@ CSRF_COOKIE_SECURE = False
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
-
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:5173",
+    'repairmybike.up.railway.app'
+]
 # Rate Limiting Settings
 RATELIMIT_ENABLE = True
 RATELIMIT_USE_CACHE = 'default'
