@@ -42,7 +42,7 @@ RUN pip install -r /tmp/requirements.txt
 # Set the Django default project name
 ARG PROJ_NAME="authback"
 
-# Create a bash script to run the Django project
+# Update the bash script to bind Gunicorn to the correct port
 RUN printf "#!/bin/bash\n" > ./paracord_runner.sh && \
     printf "RUN_PORT=\"\${PORT:-8000}\"\n\n" >> ./paracord_runner.sh && \
     printf "python manage.py migrate --no-input\n" >> ./paracord_runner.sh && \
