@@ -24,7 +24,7 @@ from accounts.views import accounts_root_view
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include('accounts.urls')),
-    path('/', accounts_root_view, name='api-root'),
+    path('account-root-view', accounts_root_view, name='api-root'),
 ]
 if settings.DEBUG:
         urlpatterns += static(settings.MEDIA_URL,
