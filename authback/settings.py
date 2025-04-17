@@ -220,11 +220,29 @@ RATELIMIT_KEY_PREFIX = 'ratelimit'
 RATELIMIT_BLOCK = True
 RATELIMIT_VIEW = 'accounts.views.rate_limit_view'
 
-# Redis Cache settings
+# # Redis Cache settings
+# CACHES = {
+#     'default': {
+#         'BACKEND': 'django_redis.cache.RedisCache',
+#         'LOCATION': 'redis://127.0.0.1:6379/1',
+#         'OPTIONS': {
+#             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+#             'RETRY_ON_TIMEOUT': True,
+#             'MAX_CONNECTIONS': 100,
+#             'CONNECTION_POOL_KWARGS': {'max_connections': 100},
+#             'SOCKET_CONNECT_TIMEOUT': 5,
+#             'SOCKET_TIMEOUT': 5,
+#             'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
+#             'IGNORE_EXCEPTIONS': True,
+#         },
+#         'KEY_PREFIX': 'authback',
+#     }
+# }
+
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': 'redis://127.0.0.1:6379/1',
+        'LOCATION': config('REDIS_PUBLIC_URL', default='redis://127.0.0.1:6379/1'),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
             'RETRY_ON_TIMEOUT': True,
