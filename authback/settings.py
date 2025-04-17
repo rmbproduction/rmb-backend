@@ -211,7 +211,7 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
-    'repairmybike.up.railway.app'
+    'https://repairmybike.up.railway.app',
 ]
 # Rate Limiting Settings
 RATELIMIT_ENABLE = True
