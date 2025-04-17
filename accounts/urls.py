@@ -9,7 +9,8 @@ from .views import (
     LogoutView,
     PasswordResetView,
     PasswordResetConfirmView,
-    rate_limit_view
+    rate_limit_view,
+    accounts_root_view
 )
 from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 
@@ -36,4 +37,5 @@ urlpatterns = [
     
     # Error Handling
     path('rate-limit/', rate_limit_view, name='rate-limit'),
+    path('', accounts_root_view, name='accounts-root'),  # Root URL
 ]

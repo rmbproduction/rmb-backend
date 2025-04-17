@@ -518,3 +518,9 @@ class LogoutView(APIView):
                 {"error": "An error occurred during logout"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+        
+
+from django.http import JsonResponse
+
+def accounts_root_view(request):
+    return JsonResponse({"message": "Welcome to the Accounts API!"})
