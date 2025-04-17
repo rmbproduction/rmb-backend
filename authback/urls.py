@@ -23,8 +23,7 @@ from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from accounts.views import accounts_root_view
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('', include('accounts.urls')),
-    path('account-root-view', accounts_root_view, name='api-root'),
+    path('api/accounts/', include('accounts.urls')),
 ]
 if settings.DEBUG:
         urlpatterns += static(settings.MEDIA_URL,
