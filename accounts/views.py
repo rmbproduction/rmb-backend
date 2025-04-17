@@ -436,6 +436,53 @@ class SignupView(generics.GenericAPIView):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+# class VerifyEmailView(APIView):
+#     permission_classes = (permissions.AllowAny,)
+
+#     def get(self, request, token):
+#         # Get user_id from cache
+#         user_id = cache.get(f'email_verification_{token}')
+#         if not user_id:
+#             return Response({
+#                 "error": "Invalid or expired verification link"
+#             }, status=status.HTTP_400_BAD_REQUEST)
+        
+#         try:
+#             user = User.objects.get(pk=user_id)
+#             if not user.is_active:
+#                 user.is_active = True
+#                 user.email_verified = True
+#                 user.save()
+                
+#                 # Generate JWT tokens
+#                 tokens = get_tokens_for_user(user)
+                
+#                 # Clear verification token
+#                 cache.delete(f'email_verification_{token}')
+                
+#                 # Log successful verification
+#                 logger.info(f"Email verified for user: {user.email}")
+                
+#                 return Response({
+#                     "message": "Email verified successfully",
+#                     "tokens": tokens,
+#                     "user": {
+#                         "id": user.id,
+#                         "username": user.username,
+#                         "email": user.email
+#                     }
+#                 })
+            
+#             return Response({
+#                 "message": "Email already verified"
+#             })
+            
+#         except User.DoesNotExist:
+#             logger.error(f"Verification failed: User not found for token {token}")
+#             return Response({
+#                 "error": "User not found"
+#             }, status=status.HTTP_404_NOT_FOUND)
+
 class VerifyEmailView(APIView):
     permission_classes = (permissions.AllowAny,)
 
@@ -469,12 +516,19 @@ class VerifyEmailView(APIView):
                     "user": {
                         "id": user.id,
                         "username": user.username,
-                        "email": user.email
+                        "email": user.email,
+                        "email_verified": user.email_verified,  # Include email_verified in the response
                     }
                 })
             
             return Response({
-                "message": "Email already verified"
+                "message": "Email already verified",
+                "user": {
+                    "id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "email_verified": user.email_verified,  # Include email_verified in the response
+                }
             })
             
         except User.DoesNotExist:
@@ -482,6 +536,9 @@ class VerifyEmailView(APIView):
             return Response({
                 "error": "User not found"
             }, status=status.HTTP_404_NOT_FOUND)
+
+
+
 
 class LogoutView(APIView):
     permission_classes = (permissions.IsAuthenticated,)
