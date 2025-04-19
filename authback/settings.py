@@ -27,9 +27,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-4ga9@g3zft*$zk1rwdu_au@v!w&zjfd%jodqv92=*s!2_x5r&r')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True
 
-ALLOWED_HOSTS = ['*.railway.app', 'localhost','repairmybike.up.railway.app']
+ALLOWED_HOSTS = [
+    'repairmybike.up.railway.app',
+    'localhost',
+    '127.0.0.1',
+    '.railway.app',
+]
 
 
 # Application definition
@@ -46,6 +51,10 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt.token_blacklist',
     'accounts',
     'corsheaders',
+    'marketplace',
+    'django_filters',
+    'vehicle',
+    'repairing_service',
     
     # 'django_extens
     # ions'
@@ -62,12 +71,31 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+# Service Ports Configuration
+SERVICE_PORTS = {
+    'API_GATEWAY': 8080,
+    'DJANGO_SERVER': 8000,
+    'FRONTEND_VITE': 5173,
+    'FRONTEND_REACT': 3000,
+    'REDIS': 6379,
+    'POSTGRES': 5432,
+    'CELERY_FLOWER': 5555,
+}
+
 # CORS settings
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # Vite default port
-    "http://127.0.0.1:5173",
+    f"http://localhost:{SERVICE_PORTS['FRONTEND_VITE']}",  # Vite
+    f"http://127.0.0.1:{SERVICE_PORTS['FRONTEND_VITE']}",
+    f"http://localhost:{SERVICE_PORTS['FRONTEND_REACT']}",  # React
+    f"http://127.0.0.1:{SERVICE_PORTS['FRONTEND_REACT']}",
+    f"http://localhost:{SERVICE_PORTS['DJANGO_SERVER']}",  # Django
+    f"http://127.0.0.1:{SERVICE_PORTS['DJANGO_SERVER']}",
+    f"http://localhost:{SERVICE_PORTS['API_GATEWAY']}",  # API Gateway
+    f"http://127.0.0.1:{SERVICE_PORTS['API_GATEWAY']}",
+    "https://repairmybike.up.railway.app",  # Railway.app domain
 ]
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_ALL_ORIGINS = True  # Only for development
 CORS_ALLOW_METHODS = [
     'DELETE',
     'GET',
@@ -86,6 +114,7 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'access-control-allow-origin',
 ]
 
 ROOT_URLCONF = 'authback.urls'
@@ -122,15 +151,15 @@ WSGI_APPLICATION = 'authback.wsgi.application'
 #     }
 # else:
 DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql_psycopg2",
-            "NAME": config('DATABASE_NAME', default='mydatabase'),
-            "USER": config('DATABASE_USER', default='myuser'),
-            "PASSWORD": config('DATABASE_PASSWORD', default='mypassword'),
-            "HOST": config('DATABASE_HOST', default='localhost'),
-            "PORT": config('DATABASE_PORT', default='5432'),
-        }
+    "default": {
+        "ENGINE": "django.db.backends.postgresql_psycopg2",
+        "NAME": config('DATABASE_NAME', default='rmbdevserver'),
+        "USER": config('DATABASE_USER', default='postgres'),
+        "PASSWORD": config('DATABASE_PASSWORD', default='mypassword'),
+        "HOST": config('DATABASE_HOST', default='127.0.0.1'),
+        "PORT": config('DATABASE_PORT', default=str(SERVICE_PORTS['POSTGRES'])),
     }
+}
 
 DATABASES_URL = config('DATABASE_URL', default='',cast=str)
 if DATABASES_URL:
@@ -210,7 +239,7 @@ SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5173",
+    f"http://localhost:{SERVICE_PORTS['FRONTEND_VITE']}",
     'https://repairmybike.up.railway.app',
 ]
 # Rate Limiting Settings
@@ -220,29 +249,16 @@ RATELIMIT_KEY_PREFIX = 'ratelimit'
 RATELIMIT_BLOCK = True
 RATELIMIT_VIEW = 'accounts.views.rate_limit_view'
 
-# # Redis Cache settings
-# CACHES = {
-#     'default': {
-#         'BACKEND': 'django_redis.cache.RedisCache',
-#         'LOCATION': 'redis://127.0.0.1:6379/1',
-#         'OPTIONS': {
-#             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-#             'RETRY_ON_TIMEOUT': True,
-#             'MAX_CONNECTIONS': 100,
-#             'CONNECTION_POOL_KWARGS': {'max_connections': 100},
-#             'SOCKET_CONNECT_TIMEOUT': 5,
-#             'SOCKET_TIMEOUT': 5,
-#             'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
-#             'IGNORE_EXCEPTIONS': True,
-#         },
-#         'KEY_PREFIX': 'authback',
-#     }
-# }
-
+# Cache Configuration
 CACHES = {
     'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'unique-snowflake',
+    }
+} if not config('USE_REDIS', default=False, cast=bool) else {
+    'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': config('REDIS_PUBLIC_URL', default='redis://127.0.0.1:6379/1'),
+        'LOCATION': config('REDIS_PUBLIC_URL', default=f'redis://127.0.0.1:{SERVICE_PORTS["REDIS"]}/1'),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
             'RETRY_ON_TIMEOUT': True,
@@ -256,10 +272,6 @@ CACHES = {
         'KEY_PREFIX': 'authback',
     }
 }
-
-# Use Redis for session cache
-SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
-SESSION_CACHE_ALIAS = 'default'
 
 # Cache timeout settings
 CACHE_TTL = 60 * 5  # Cache timeout of 5 minutes
@@ -294,7 +306,7 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
+        'rest_framework.permissions.AllowAny',  # More permissive for development
     ],
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
@@ -306,7 +318,20 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.MultiPartParser',
     ],
     'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
+    'DEFAULT_SCHEMA_CLASS': 'rest_framework.schemas.coreapi.AutoSchema',
 }
+
+
+
+
+
+
+CELERY_BROKER_URL = config('CELERY_BROKER_URL', default=f'redis://localhost:{SERVICE_PORTS["REDIS"]}/0')
+CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default=f'redis://localhost:{SERVICE_PORTS["REDIS"]}/1')
+CELERY_FLOWER_PORT = SERVICE_PORTS['CELERY_FLOWER']
+
+
+
 
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.hostinger.com'  # Use your email provider's SMTP server
@@ -315,3 +340,8 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = config('EMAIL_HOST_USER')  # Add this in your .env file
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD')  # Add this in your .env file
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL')  # Add this in your .env file
+
+# Authentication backends
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+]

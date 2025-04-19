@@ -1,6 +1,8 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
-from django.utils.crypto import get_random_string  # Add this import at the top
+from django.utils.crypto import get_random_string
+from django.utils import timezone
+
 class User(AbstractUser):
     email = models.EmailField(unique=True)
     email_verified = models.BooleanField(default=False)
@@ -21,13 +23,28 @@ class User(AbstractUser):
     )
 
 class EmailVerificationToken(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
     token = models.CharField(max_length=64, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    
+    def is_valid(self):
+        return self.created_at >= timezone.now() - timezone.timedelta(hours=24)
 
-    def save(self, *args, **kwargs):
-        if not self.token:
-            self.token = get_random_string(64)
-        super().save(*args, **kwargs)
+    @classmethod
+    def generate_token(cls, user):
+        token = get_random_string(64)
+        return cls.objects.create(user=user, token=token)
 
 
+class UserProfile(models.Model):
+    email = models.EmailField(unique=True)
+    name = models.CharField(max_length=255)
+    username = models.CharField(max_length=255)
+    address = models.TextField()
+    profile_photo = models.ImageField(upload_to="profiles/")
+    vehicle_name = models.CharField(max_length=255)
+    vehicle_type = models.CharField(max_length=255)
+    manufacturer = models.CharField(max_length=255)
+
+    def __str__(self):
+        return self.email

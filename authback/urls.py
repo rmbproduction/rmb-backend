@@ -24,6 +24,9 @@ from accounts.views import accounts_root_view
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/accounts/', include('accounts.urls')),
+    path('api/vehicle/', include('vehicle.urls')),
+    path('api/repairing_service/', include('repairing_service.urls')),
+    path('api/marketplace/', include('marketplace.urls')),
 ]
 if settings.DEBUG:
         urlpatterns += static(settings.MEDIA_URL,

@@ -37,6 +37,7 @@ import jwt
 from rest_framework.permissions import AllowAny
 from collections import defaultdict
 from datetime import datetime, timedelta
+from django.views.decorators.csrf import csrf_exempt
 
 logger = logging.getLogger(__name__)
 
@@ -216,29 +217,53 @@ class LoginView(APIView):
 
     @method_decorator(ratelimit(key='ip', rate='5/m', method=['POST']))
     def post(self, request):
-        if getattr(request, 'limited', False):
-            return Response({
-                "error": "Too many login attempts. Please try again later.",
-                "detail": "Rate limit exceeded"
-            }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        try:
+            if getattr(request, 'limited', False):
+                return Response({
+                    "error": "Too many login attempts. Please try again later.",
+                    "detail": "Rate limit exceeded"
+                }, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-        serializer = LoginSerializer(data=request.data)
-        if serializer.is_valid():
+            serializer = LoginSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                
             email = serializer.validated_data['email']
             password = serializer.validated_data['password']
 
-            # Check login attempts
+            # Try to check login attempts, but don't fail if cache is down
             try:
                 check_login_attempts(email)
             except ValidationError as e:
                 return Response({"error": str(e)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            except Exception as e:
+                # Log the error but continue with authentication
+                logger.error(f"Error checking login attempts: {str(e)}")
 
+            # First check if user exists but is not verified
+            try:
+                user_exists = User.objects.filter(email=email).exists()
+                user_obj = User.objects.get(email=email) if user_exists else None
+                
+                if user_exists and not user_obj.is_active:
+                    return Response({
+                        "error": "Please verify your email before logging in",
+                        "email_verification_required": True,
+                        "email": email
+                    }, status=status.HTTP_401_UNAUTHORIZED)
+            except Exception as e:
+                logger.error(f"Error checking user verification status: {str(e)}")
+
+            # Authenticate user
             user = authenticate(request, email=email, password=password)
             
             if not user:
-                # Increment failed login attempts
-                attempts = cache.get(f'login_attempts_{email}', 0)
-                cache.set(f'login_attempts_{email}', attempts + 1, timeout=3600)
+                # Try to increment failed login attempts, but don't fail if cache is down
+                try:
+                    attempts = cache.get(f'login_attempts_{email}', 0)
+                    cache.set(f'login_attempts_{email}', attempts + 1, timeout=3600)
+                except Exception as e:
+                    logger.error(f"Error tracking failed login attempts: {str(e)}")
                 
                 # Log failed attempt
                 logger.warning(f"Failed login attempt for {email}")
@@ -247,26 +272,49 @@ class LoginView(APIView):
                     "error": "Invalid credentials"
                 }, status=status.HTTP_401_UNAUTHORIZED)
             
-            if not user.is_active:
-                return Response({
-                    "error": "Please verify your email first"
-                }, status=status.HTTP_401_UNAUTHORIZED)
-
             # Reset login attempts on successful login
-            cache.delete(f'login_attempts_{email}')
-            cache.delete(f'account_lockout_{email}')
+            try:
+                cache.delete(f'login_attempts_{email}')
+                cache.delete(f'account_lockout_{email}')
+            except Exception as e:
+                logger.error(f"Error clearing login attempts: {str(e)}")
             
             # Log successful login
             logger.info(f"Successful login for {email}")
 
             # Get tokens with custom claims
-            tokens = get_tokens_for_user(user)
-            
+            try:
+                tokens = get_tokens_for_user(user)
+                
+                # Check if this is first login after verification
+                is_first_login = user.last_login is None
+                
+                # Update last login time
+                if is_first_login:
+                    logger.info(f"First login after verification for {email}")
+                
+                return Response({
+                    "message": "Login successful",
+                    "is_first_login": is_first_login,
+                    "tokens": tokens,
+                    "user": {
+                        "id": user.id,
+                        "username": user.username,
+                        "email": user.email,
+                        "email_verified": user.email_verified
+                    }
+                })
+            except Exception as e:
+                logger.error(f"Error generating tokens: {str(e)}")
+                return Response({
+                    "error": "Authentication successful but failed to generate tokens. Please try again."
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+        except Exception as e:
+            logger.error(f"Unexpected login error: {str(e)}")
             return Response({
-                "message": "Login successful",
-                "tokens": tokens,
-            })
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                "error": "An unexpected error occurred. Please try again later."
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
@@ -382,200 +430,195 @@ class SignupView(generics.GenericAPIView):
     serializer_class = UserSerializer
     renderer_classes = [JSONRenderer, BrowsableAPIRenderer]
 
+    @method_decorator(csrf_exempt)
+    @method_decorator(ratelimit(key='ip', rate='20/h', method=['POST']))
     def post(self, request):
+        if getattr(request, 'limited', False):
+            return Response({
+                "error": "Too many signup attempts. Please try again later.",
+                "detail": "Rate limit exceeded"
+            }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
         serializer = self.get_serializer(data=request.data)
-        if serializer.is_valid():
-            try:
-                # Validate password strength
-                password = serializer.validated_data.get('password')
-                try:
-                    validate_password_strength(password)
-                except ValidationError as e:
-                    return Response(
-                        {"error": str(e)},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-                # Create inactive user
-                user = serializer.save(is_active=False)
-
-                # Generate verification token
-                token = get_random_string(64)
-                cache.set(f'email_verification_{token}', user.pk, timeout=3600)  # 1 hour expiry
-
-                # Create verification URL
-                verification_url = request.build_absolute_uri(
-                    f'/api/accounts/verify-email/{token}/'
-                )
-
-                # Send verification email
-                send_mail(
-                    subject="Verify your email",
-                    message=f"Click this link to verify your email:\n\n{verification_url}",
-                    from_email=settings.DEFAULT_FROM_EMAIL,
-                    recipient_list=[user.email],
-                    fail_silently=False,
-                )
-
-                # Log successful signup
-                logger.info(f"New user signup: {user.email}")
-
-                return Response({
-                    "message": "Registration successful. Please check your email to verify your account.",
-                    "email": user.email
-                }, status=status.HTTP_201_CREATED)
-
-            except Exception as e:
-                # If email sending fails, delete the user and return error
-                if user:
-                    user.delete()
-                logger.error(f"Signup error for {request.data.get('email')}: {str(e)}")
-                return Response({
-                    "error": "Failed to send verification email. Please try again."
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-# class VerifyEmailView(APIView):
-#     permission_classes = (permissions.AllowAny,)
-
-#     def get(self, request, token):
-#         # Get user_id from cache
-#         user_id = cache.get(f'email_verification_{token}')
-#         if not user_id:
-#             return Response({
-#                 "error": "Invalid or expired verification link"
-#             }, status=status.HTTP_400_BAD_REQUEST)
         
-#         try:
-#             user = User.objects.get(pk=user_id)
-#             if not user.is_active:
-#                 user.is_active = True
-#                 user.email_verified = True
-#                 user.save()
-                
-#                 # Generate JWT tokens
-#                 tokens = get_tokens_for_user(user)
-                
-#                 # Clear verification token
-#                 cache.delete(f'email_verification_{token}')
-                
-#                 # Log successful verification
-#                 logger.info(f"Email verified for user: {user.email}")
-                
-#                 return Response({
-#                     "message": "Email verified successfully",
-#                     "tokens": tokens,
-#                     "user": {
-#                         "id": user.id,
-#                         "username": user.username,
-#                         "email": user.email
-#                     }
-#                 })
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        email = serializer.validated_data.get('email')
+        password = serializer.validated_data.get('password')
+        
+        # Check if user already exists
+        if User.objects.filter(email=email).exists():
+            return Response({
+                "error": "User with this email already exists"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate password strength
+        try:
+            validate_password_strength(password)
+        except ValidationError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
             
-#             return Response({
-#                 "message": "Email already verified"
-#             })
+        # Create user account (inactive until email is verified)
+        user = serializer.save()
+        user.is_active = False  # Disable until email verification
+        user.save()
+        
+        # Generate verification token
+        token = get_random_string(64)
+        
+        # Store in both cache and database for redundancy
+        try:
+            # Store in cache with 24 hour expiry
+            cache.set(f'email_verification_{token}', user.pk, timeout=86400)
             
-#         except User.DoesNotExist:
-#             logger.error(f"Verification failed: User not found for token {token}")
-#             return Response({
-#                 "error": "User not found"
-#             }, status=status.HTTP_404_NOT_FOUND)
+            # Also store in database
+            EmailVerificationToken.objects.create(
+                user=user,
+                token=token
+            )
+            
+            # Generate verification URL
+            verification_url = request.build_absolute_uri(
+                f'/api/accounts/verify-email/{token}/'
+            )
+            
+            # Send verification email
+            send_mail(
+                subject="Verify Your Email",
+                message=f"Thank you for signing up! Please click the link below to verify your email:\n\n{verification_url}\n\nThis link will expire in 24 hours.",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+            
+            # Log signup
+            logger.info(f"New user signed up: {email}")
+            
+            return Response({
+                "message": "Registration successful! Please check your email to verify your account.",
+                "email": email,
+                "verification_required": True,
+                "next_step": "Please verify your email before logging in. Check your inbox for a verification link."
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            # If email sending fails, delete the user and return error
+            user.delete()
+            logger.error(f"Signup error: {str(e)}")
+            return Response({
+                "error": "Failed to create account. Please try again later."
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class VerifyEmailView(APIView):
     permission_classes = (permissions.AllowAny,)
 
     def get(self, request, token):
-        # Get user_id from cache
-        user_id = cache.get(f'email_verification_{token}')
-        if not user_id:
-            return Response({
-                "error": "Invalid or expired verification link"
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
         try:
-            user = User.objects.get(pk=user_id)
-            if not user.is_active:
-                user.is_active = True
-                user.email_verified = True
-                user.save()
+            # Try to get user_id from cache first
+            user_id = cache.get(f'email_verification_{token}')
+            
+            if not user_id:
+                # If not in cache, check if token exists in database
+                verification_token = EmailVerificationToken.objects.filter(
+                    token=token,
+                    created_at__gte=timezone.now() - timezone.timedelta(hours=24)
+                ).first()
                 
-                # Generate JWT tokens
-                tokens = get_tokens_for_user(user)
-                
-                # Clear verification token
-                cache.delete(f'email_verification_{token}')
-                
-                # Log successful verification
-                logger.info(f"Email verified for user: {user.email}")
+                if verification_token:
+                    user_id = verification_token.user.id
+                else:
+                    return Response({
+                        "error": "Invalid or expired verification link"
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            try:
+                user = User.objects.get(pk=user_id)
+                if not user.is_active:
+                    user.is_active = True
+                    user.email_verified = True
+                    user.save()
+                    
+                    try:
+                        # Try to clear verification token from cache
+                        cache.delete(f'email_verification_{token}')
+                        # Also delete from database if it exists
+                        EmailVerificationToken.objects.filter(token=token).delete()
+                    except Exception as e:
+                        logger.warning(f"Failed to delete verification token: {str(e)}")
+                    
+                    logger.info(f"Email verified for user: {user.email}")
+                    
+                    return Response({
+                        "message": "Email verified successfully. You can now log in with your credentials.",
+                        "verified": True,
+                        "user": {
+                            "email": user.email,
+                        }
+                    }, status=status.HTTP_200_OK)
                 
                 return Response({
-                    "message": "Email verified successfully",
-                    "tokens": tokens,
+                    "message": "Email already verified. You can log in with your credentials.",
+                    "verified": True,
                     "user": {
-                        "id": user.id,
-                        "username": user.username,
                         "email": user.email,
-                        "email_verified": user.email_verified,  # Include email_verified in the response
                     }
-                })
-            
+                }, status=status.HTTP_200_OK)
+                
+            except User.DoesNotExist:
+                logger.error(f"Verification failed: User not found for token {token}")
+                return Response({
+                    "error": "User not found"
+                }, status=status.HTTP_404_NOT_FOUND)
+                
+        except Exception as e:
+            logger.error(f"Email verification error: {str(e)}")
             return Response({
-                "message": "Email already verified",
-                "user": {
-                    "id": user.id,
-                    "username": user.username,
-                    "email": user.email,
-                    "email_verified": user.email_verified,  # Include email_verified in the response
-                }
-            })
-            
-        except User.DoesNotExist:
-            logger.error(f"Verification failed: User not found for token {token}")
-            return Response({
-                "error": "User not found"
-            }, status=status.HTTP_404_NOT_FOUND)
-
-
-
+                "error": "An error occurred during email verification"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class LogoutView(APIView):
-    permission_classes = (permissions.IsAuthenticated,)
+    permission_classes = (permissions.AllowAny,)
+    serializer_class = LogoutSerializer
 
     def post(self, request):
         try:
-            # Get the refresh token from request
-            refresh_token = request.data.get('refresh_token')
-            if not refresh_token:
+            serializer = LogoutSerializer(data=request.data)
+            if not serializer.is_valid():
                 return Response(
-                    {"error": "Refresh token is required"},
+                    serializer.errors,
                     status=status.HTTP_400_BAD_REQUEST
                 )
+                
+            refresh_token = serializer.validated_data['refresh']
 
             # Blacklist the refresh token
-            token = RefreshToken(refresh_token)
-            token.blacklist()
+            try:
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+                
+                # Try to log the logout if user is authenticated
+                if request.user.is_authenticated:
+                    logger.info(f"User {request.user.email} logged out successfully")
+                else:
+                    logger.info("User logged out successfully (unauthenticated)")
 
-            # Log the logout
-            logger.info(f"User {request.user.email} logged out successfully")
-
-            return Response(
-                {"message": "Successfully logged out"},
-                status=status.HTTP_200_OK
-            )
-        except TokenError as e:
-            return Response(
-                {"error": "Invalid token"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+                return Response(
+                    {"message": "Successfully logged out"},
+                    status=status.HTTP_200_OK
+                )
+            except TokenError as e:
+                return Response(
+                    {"error": "Invalid token. Please provide a valid refresh token."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
         except Exception as e:
-            logger.error(f"Logout error for user {request.user.email}: {str(e)}")
+            logger.error(f"Logout error: {str(e)}")
             return Response(
                 {"error": "An error occurred during logout"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
 
 from django.http import JsonResponse
 

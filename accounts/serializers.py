@@ -1,7 +1,7 @@
 # accounts/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-
+from .models import UserProfile
 User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
@@ -89,7 +89,12 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
 class LogoutSerializer(serializers.Serializer):
     refresh = serializers.CharField(
+        required=True,
         help_text="Enter your refresh token to logout",
+        error_messages={
+            'required': 'Refresh token is required to log out',
+            'blank': 'Refresh token cannot be blank',
+        },
         style={
             'base_template': 'textarea.html',
             'placeholder': 'Paste your refresh token here',
@@ -97,3 +102,16 @@ class LogoutSerializer(serializers.Serializer):
             'cols': 40
         }
     )
+    
+    def validate_refresh(self, value):
+        if not value.strip():
+            raise serializers.ValidationError("Refresh token cannot be empty")
+        return value
+    
+
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserProfile
+        fields = ['email', 'name', 'username', 'address', 'vehicle_name', 'vehicle_type', 'manufacturer']
